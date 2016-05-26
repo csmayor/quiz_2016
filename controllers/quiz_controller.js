@@ -3,13 +3,11 @@ var models = require('../models');
 var Sequelize = require('sequelize');
 var cloudinary = require('cloudinary');
 var fs = require('fs');
-var url = require('url');
-var paginate = require('./paginate').paginate;
 
 
 // Opciones para imagenes subidas a Cloudinary
 var cloudinary_image_options = { crop: 'limit', width: 200, height: 200, radius: 5, 
-                                 border: "3px_solid_blue", tags: ['core', 'quiz-2016'] };
+                                
 
 
 // Autoload el quiz asociado a :quizId
@@ -46,73 +44,24 @@ exports.ownershipRequired = function(req, res, next){
 // GET /quizzes
 exports.index = function(req, res, next) {
 
-    var options = {};
-    var title = "Preguntas";
+var search = req.query.search || "";
+	search = search.replace(" ","%");
+	var format = req.params.format || "html";
 
-    // Solo los Quizzes de un autor.
-    if (req.user) {
-        options.where = {AuthorId: req.user.id};
-        title = "Mis Preguntas";
-    }
-
-    models.Quiz.count(options)
-    .then(function(count) {
-
-        options.include = [ models.Attachment ];
-
-        // Para usuarios logeados: incluir los fans de las preguntas.
-        if (req.session.user) {
-            options.include.push({ model: models.User, as: 'Fans' });
-        }
-
-        // Paginacion:
-
-        var items_per_page = 6;
-
-        // La pagina a mostrar viene en la query
-        var pageno = parseInt(req.query.pageno) || 1;
-
-        // Datos para obtener el rango de datos a buscar en la BBDD.
-        var pagination = {
-            offset: items_per_page * (pageno - 1),
-            limit: items_per_page
-        };
-
-        // Crear un string con el HTML que pinta la botonera de paginacion.
-        // Lo añado como una variable local de res para que lo pinte el layout de la aplicacion.
-        res.locals.paginate_control = paginate(count, items_per_page, pageno, req.url);
-
-        return pagination;
-    })
-    .then(function(pagination) {
-
-        options.offset = pagination.offset;
-        options.limit  = pagination.limit;
-	var aux = (req.query.search !== undefined)? req.query.search : "";
-	
-        return models.Quiz.findAll({where: {question: {$like: "%"+aux+"%"}}});
-     
-    })
-	.then(function(quizzes) {
-
-        // Para usuarios logeados:
-        //   Añado a todos los quizzes un atributo booleano llamado "favourite"
-        //   que indica si el quiz es uno de mis favoritos o no. 
-        if (req.session.user) {
-
-            quizzes.forEach(function(quiz) {
-                quiz.favourite = quiz.Fans.some(function(fan) {
-                    return fan.id == req.session.user.id;
-                });
-            });
-        } 
-
-		res.render('quizzes/index.ejs', {quizzes: quizzes,
-                                         title: title});
+	models.Quiz.findAll({
+							where: {question: {$like: "%" + search + "%"}},
+							include: [ {model: models.Attachment}]
+						})
+		.then(function(quizzes) {
+			if (format==="json"){
+				res.json({ quizzes: quizzes});
+			}else{
+				res.render('quizzes/index.ejs', { quizzes: quizzes});
+			}
 	})
-	.catch(function(error) {
-		next(error);
-	});
+		.catch(function(error) {
+			next(error);
+		});
 };
 
 
@@ -120,32 +69,14 @@ exports.index = function(req, res, next) {
 exports.show = function(req, res, next) {
 
 	var answer = req.query.answer || '';
+	var format = req.query.format || 'html';
 
-    // Para usuarios logeados:
-    //   Si el quiz es uno de mis favoritos, creo un atributo llamado
-    //   "favourite" con el valor true.
-    if (req.session.user) {
-
-        req.quiz.getFans({where: {id: req.session.user.id}})
-            .then(function(fans) {
-                if (fans.length > 0) {
-                    req.quiz.favourite = true
-                }      
-            })
-            .then(function() {
-                res.render('quizzes/show', { quiz: req.quiz,
-                                             answer: answer});
-            })
-            .catch(function(error){
-                next(error);
-            });
-    } else {
-        res.render('quizzes/show', {quiz: req.quiz,
-                                    answer: answer});
-    }
+if (format==="json"){
+		res.json({quiz: req.quiz, answer: answer});
+	}else{
+		res.render('quizzes/show', {quiz: req.quiz, answer: answer});
+	}
 };
-
-
 // GET /quizzes/:quizId/check
 exports.check = function(req, res, next) {
 
@@ -161,11 +92,6 @@ exports.check = function(req, res, next) {
 
 // GET /quizzes/new
 exports.new = function(req, res, next) {
-
-    // URL al que volver despues de crear un nuevo quiz.  
-    var redir = req.query.redir || 
-                url.parse(req.headers.referer || "/quizzes").pathname;
-
     var quiz = models.Quiz.build({question: "", answer: ""});
     res.render('quizzes/new', {quiz: quiz,
                                redir: redir});
@@ -174,8 +100,6 @@ exports.new = function(req, res, next) {
 
 // POST /quizzes/create
 exports.create = function(req, res, next) {
-
-    var redir = req.body.redir || '/quizzes'
 
     var authorId = req.session.user && req.session.user.id || 0;
     var quiz = { question: req.body.question, 
@@ -215,20 +139,16 @@ exports.create = function(req, res, next) {
         req.flash('error', 'Error al crear un Quiz: '+error.message);
         next(error);
     }); 
+
+
 };
 
 
 // GET /quizzes/:quizId/edit
 exports.edit = function(req, res, next) {
+var quiz = req.quiz;  // req.quiz: autoload de instancia de quiz
 
-    // URL al que volver despues de editar el quiz.  
-    var redir = req.query.redir || 
-                url.parse(req.headers.referer || "/quizzes").pathname;
-
-    var quiz = req.quiz;  // req.quiz: autoload de instancia de quiz
-
-    res.render('quizzes/edit', {quiz: quiz,
-                                redir: redir});
+   res.render('quizzes/edit', {quiz: quiz});
 };
 
 
@@ -236,7 +156,7 @@ exports.edit = function(req, res, next) {
 // PUT /quizzes/:quizId
 exports.update = function(req, res, next) {
 
-    var redir = req.body.redir || '/quizzes'
+    var redir = req.body.redir || '/quizzes'//quiytarfrcdgb
 
     req.quiz.question = req.body.question;
     req.quiz.answer   = req.body.answer;
@@ -264,7 +184,7 @@ exports.update = function(req, res, next) {
         });
     })            
     .then(function() {
-        res.redirect(redir);
+        res.redirect('/quizzes');
     })
     .catch(Sequelize.ValidationError, function(error) {
 
@@ -273,8 +193,7 @@ exports.update = function(req, res, next) {
           req.flash('error', error.errors[i].value);
       };
 
-      res.render('quizzes/edit', {quiz: req.quiz,
-                                  redir: redir});
+      res.render('quizzes/edit', {quiz: req.quiz});
     })
     .catch(function(error) {
       req.flash('error', 'Error al editar el Quiz: '+error.message);
@@ -285,26 +204,21 @@ exports.update = function(req, res, next) {
 
 // DELETE /quizzes/:quizId
 exports.destroy = function(req, res, next) {
+// Borrar la imagen de Cloudinary (Ignoro resultado)
+		if (req.quiz.Attachment) {
+				cloudinary.api.delete_resources(req.quiz.Attachment.public_id);
+		}
 
-    // URL al que volver despues de borrar el quiz.  
-    var redir = req.query.redir || 
-                url.parse(req.headers.referer || "/quizzes").pathname;
-
-    // Borrar la imagen de Cloudinary (Ignoro resultado)
-    if (req.quiz.Attachment) {
-        cloudinary.api.delete_resources(req.quiz.Attachment.public_id);
-    }
-
-    req.quiz.destroy()
-      .then( function() {
-  	  req.flash('success', 'Quiz borrado con éxito.');
-        res.redirect(redir);
-      })
-      .catch(function(error){
-  	  req.flash('error', 'Error al editar el Quiz: '+error.message);
-        next(error);
-      });
-};
+		req.quiz.destroy()
+			.then( function() {
+			req.flash('success', 'Quiz borrado con éxito.');
+				res.redirect('/quizzes');
+			})
+			.catch(function(error){
+			req.flash('error', 'Error al editar el Quiz: '+error.message);
+				next(error);
+			});
+    };
 
 // FUNCIONES AUXILIARES
 
@@ -316,11 +230,7 @@ function createAttachment(req, uploadResult, quiz) {
         return Promise.resolve();
     }
 
-    return models.Attachment.create({ public_id: uploadResult.public_id,
-                                      url: uploadResult.url,
-                                      filename: req.file.originalname,
-                                      mime: req.file.mimetype,
-                                      QuizId: quiz.id })
+    return models.Attachment.create({ public_id: uploadResult.public_id)
     .then(function(attachment) {
         req.flash('success', 'Imagen nueva guardada con éxito.');
     })
