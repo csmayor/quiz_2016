@@ -6,7 +6,7 @@ var fs = require('fs');
 
 
 // Opciones para imagenes subidas a Cloudinary
-var cloudinary_image_options = { crop: 'limit', width: 200, height: 200, radius: 5, 
+var cloudinary_image_options = { crop: 'limit', width: 200, height: 200, radius: 5, border: "3px_solid_blue", tags: ['core', 'quiz-2016']};
                                 
 
 
@@ -238,7 +238,13 @@ function createAttachment(req, uploadResult, quiz) {
         return Promise.resolve();
     }
 
-    return models.Attachment.create({ public_id: uploadResult.public_id)
+    return models.Attachment.create({
+        public_id: uploadResult.public_id,
+        url: uploadResult.url,
+        filename: req.file.originalname,
+        mime: req.file.mimetype,
+        QuizId: quiz.id
+    })
     .then(function(attachment) {
         req.flash('success', 'Imagen nueva guardada con éxito.');
     })
